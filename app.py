@@ -11,18 +11,13 @@ st.markdown("Ingrese los parámetros del cultivo para obtener la **productividad
 try:
     DATAROBOT_API_KEY = st.secrets["DATAROBOT_API_KEY"]
     DATAROBOT_DEPLOYMENT_ID = st.secrets["DATAROBOT_DEPLOYMENT_ID"]
-    DATAROBOT_HOST = st.secrets.get("DATAROBOT_HOST", "https://cfds-paved-v2.prd.ue1.aws.int.datarobot.com")
-    
-    # El DataRobot-Key es INDISPENSABLE para evitar el error 403 en predicciones online
-    DATAROBOT_KEY = st.secrets["DATAROBOT_KEY"]
-    
+    DATAROBOT_HOST = st.secrets["DATAROBOT_HOST"]
 except KeyError as e:
-    st.error(f"⚠️ Error: Falta configurar el secreto obligatorio: {e} en los ajustes de Streamlit.")
-    st.info("Para solucionar el error 403, necesitas añadir obligatoriamente tu 'DATAROBOT_KEY' en los secretos.")
+    st.error(f"⚠️ Error: Falta configurar el secreto obligatorio {e} en los ajustes de Streamlit.")
     st.stop()
 
-# URL estándar de predicción en tiempo real
-PREDICTION_URL = f"{DATAROBOT_HOST}/predApi/v1.0/deployments/{DATAROBOT_DEPLOYMENT_ID}/predictions"
+# URL unificada para predicciones según la arquitectura estándar de DataRobot v2
+PREDICTION_URL = f"{DATAROBOT_HOST.rstrip('/')}/api/v2/deployments/{DATAROBOT_DEPLOYMENT_ID}/predictions/"
 
 # --- Formulario de Entrada de Datos ---
 with st.form("cultivo_form"):
@@ -39,26 +34,27 @@ with st.form("cultivo_form"):
         
     with col2:
         st.subheader("Datos del Cultivo")
-        grupo = st.text_input("Grupo cultivo")
-        subgrupo = st.text_input("Subgrupo")
-        cultivo = st.text_input("Cultivo")
-        desagregacion = st.text_input("Desagregación cultivo")
-        ciclo = st.text_input("Ciclo del cultivo")
-        estado_fisico = st.text_input("Estado físico del cultivo")
+        grupo = st.text_input("Grupo cultivo", value="Cereales")
+        subgrupo = st.text_input("Subgrupo", value="Maíz")
+        cultivo = st.text_input("Cultivo", value="Maíz Tecnificado")
+        desagregacion = st.text_input("Desagregación cultivo", value="Maíz Tecnificado Solo")
+        ciclo = st.text_input("Ciclo del cultivo", value="Transitorio")
+        estado_fisico = st.text_input("Estado físico del cultivo", value="Grano")
         codigo_cultivo = st.number_input("Código del cultivo", min_value=0, value=2045801)
-        nombre_cientifico = st.text_input("Nombre científico del cultivo")
+        nombre_cientifico = st.text_input("Nombre científico del cultivo", value="Zea mays")
 
     st.subheader("Variables Cuantitativas")
     col3, col4, col5, col6 = st.columns(4)
-    with col3: area_sembrada = st.number_input("Área sembrada", format="%.2f", value=0.0)
-    with col4: area_cosechada = st.number_input("Área cosechada", format="%.2f", value=0.0)
-    with col5: produccion = st.number_input("Producción", format="%.2f", value=0.0)
-    with col6: rendimiento = st.number_input("Rendimiento", format="%.2f", value=0.0)
+    with col3: area_sembrada = st.number_input("Área sembrada", format="%.2f", value=10.0)
+    with col4: area_cosechada = st.number_input("Área cosechada", format="%.2f", value=9.5)
+    with col5: produccion = st.number_input("Producción", format="%.2f", value=38.0)
+    with col6: rendimiento = st.number_input("Rendimiento", format="%.2f", value=4.0)
 
     submit_button = st.form_submit_button(label="Calcular Productividad")
 
-# --- Lógica de Predicción en Tiempo Real ---
+# --- Lógica de Predicción ---
 if submit_button:
+    # Construcción de la fila de datos para el modelo
     row_data = {
         "Código Dane departamento": cod_dane_dept,
         "Departamento": departamento,
@@ -80,14 +76,14 @@ if submit_button:
         "Nombre científico del cultivo": nombre_cientifico
     }
     
-    # Headers con la autenticación dual requerida por DataRobot para Real-Time APIs
+    # Encabezados utilizando únicamente tu Token de API
     headers = {
         "Authorization": f"Bearer {DATAROBOT_API_KEY}",
-        "DataRobot-Key": DATAROBOT_KEY,
         "Content-Type": "application/json; charset=UTF-8"
     }
     
-    payload = [row_data]
+    # DataRobot requiere que los datos vayan envueltos en una lista bajo la llave "data"
+    payload = {"data": [row_data]}
     
     with st.spinner("Solicitando predicción a DataRobot..."):
         try:
@@ -95,6 +91,8 @@ if submit_button:
             
             if response.status_code == 200:
                 result = response.json()
+                
+                # Extraemos el valor de la predicción del formato estándar de la API v2
                 prediction_value = result["data"][0]["prediction"]
                 
                 st.success("¡Predicción calculada con éxito!")
@@ -105,6 +103,7 @@ if submit_button:
                 st.error(f"Error de DataRobot ({response.status_code})")
                 with st.expander("Ver respuesta detallada del servidor"):
                     st.text(response.text)
+                st.info("Nota: Si persiste el error, verifica que el 'DATAROBOT_HOST' en tus secretos de Streamlit coincida exactamente con la URL base de tu entorno corporativo o público.")
                 
         except Exception as e:
             st.error(f"Ocurrió un error al intentar conectar con el servicio: {e}")
