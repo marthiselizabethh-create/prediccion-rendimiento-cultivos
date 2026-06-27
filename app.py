@@ -115,7 +115,7 @@ with st.form("cultivo_form"):
         st.markdown('<div class="section-card">', unsafe_allow_html=True)
         st.subheader("🌱 Datos del Cultivo")
 
-        grupo = st.text_input("Grupo cultivo", value="Frutales", disabled=True)
+        grupo = st.text_input("Grupo cultivo", value="Frutales")
 
         subgrupo = st.selectbox(
             "Subgrupo",
@@ -125,8 +125,8 @@ with st.form("cultivo_form"):
         cultivo = subgrupo
         desagregacion = subgrupo
 
-        ciclo = st.text_input("Ciclo del cultivo", value="Permanente", disabled=True)
-        estado_fisico = st.text_input("Estado físico del cultivo", value="Fresco", disabled=True)
+        ciclo = st.text_input("Ciclo del cultivo", value="Permanente")
+        estado_fisico = st.text_input("Estado físico del cultivo", value="Fresco")
 
         st.markdown('</div>', unsafe_allow_html=True)
 
