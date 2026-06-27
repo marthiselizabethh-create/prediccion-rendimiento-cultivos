@@ -1,5 +1,8 @@
 import streamlit as st
 import requests
+import pandas as pd
+import io
+import time
 
 # Configuración de página
 st.set_page_config(page_title="Predicción de Productividad", layout="wide")
@@ -11,13 +14,13 @@ st.markdown("Ingrese los parámetros del cultivo para obtener la **productividad
 try:
     DATAROBOT_API_KEY = st.secrets["DATAROBOT_API_KEY"]
     DATAROBOT_DEPLOYMENT_ID = st.secrets["DATAROBOT_DEPLOYMENT_ID"]
-    DATAROBOT_HOST = st.secrets["DATAROBOT_HOST"]
+    DATAROBOT_HOST = st.secrets["DATAROBOT_HOST"].rstrip('/')
 except KeyError as e:
     st.error(f"⚠️ Error: Falta configurar el secreto obligatorio {e} en los ajustes de Streamlit.")
     st.stop()
 
-# URL unificada para predicciones según la arquitectura estándar de DataRobot v2
-PREDICTION_URL = f"{DATAROBOT_HOST.rstrip('/')}/api/v2/deployments/{DATAROBOT_DEPLOYMENT_ID}/predictions/"
+# URL exacta extraída de tu archivo predict.py
+BATCH_PREDICTIONS_URL = f"{DATAROBOT_HOST}/api/v2/batchPredictions/"
 
 # --- Formulario de Entrada de Datos ---
 with st.form("cultivo_form"):
@@ -52,58 +55,112 @@ with st.form("cultivo_form"):
 
     submit_button = st.form_submit_button(label="Calcular Productividad")
 
-# --- Lógica de Predicción ---
+# --- Lógica de Predicción por Lotes en Tiempo Real ---
 if submit_button:
-    # Construcción de la fila de datos para el modelo
+    # 1. Crear estructura de datos idéntica a lo que espera tu modelo corporativo
     row_data = {
-        "Código Dane departamento": cod_dane_dept,
-        "Departamento": departamento,
-        "Código Dane municipio": cod_dane_muni,
-        "Municipio": municipio,
-        "Grupo cultivo": grupo,
-        "Subgrupo": subgrupo,
-        "Cultivo": cultivo,
-        "Desagregación cultivo": desagregacion,
-        "Año": anio,
-        "Periodo": periodo,
-        "Área sembrada": area_sembrada,
-        "Área cosechada": area_cosechada,
-        "Producción": produccion,
-        "Rendimiento": rendimiento,
-        "Ciclo del cultivo": ciclo,
-        "Estado físico del cultivo": estado_fisico,
-        "Código del cultivo": codigo_cultivo,
-        "Nombre científico del cultivo": nombre_cientifico
+        "Código Dane departamento": [cod_dane_dept],
+        "Departamento": [departamento],
+        "Código Dane municipio": [cod_dane_muni],
+        "Municipio": [municipio],
+        "Grupo cultivo": [grupo],
+        "Subgrupo": [subgrupo],
+        "Cultivo": [cultivo],
+        "Desagregación cultivo": [desagregacion],
+        "Año": [anio],
+        "Periodo": [periodo],
+        "Área sembrada": [area_sembrada],
+        "Área cosechada": [area_cosechada],
+        "Producción": [produccion],
+        "Rendimiento": [rendimiento],
+        "Ciclo del cultivo": [ciclo],
+        "Estado físico del cultivo": [estado_fisico],
+        "Código del cultivo": [codigo_cultivo],
+        "Nombre científico del cultivo": [nombre_cientifico]
     }
     
-    # Encabezados utilizando únicamente tu Token de API
+    # Transformamos a un CSV en memoria (Buffer)
+    df = pd.DataFrame(row_data)
+    csv_buffer = io.BytesIO()
+    df.to_csv(csv_buffer, index=False, encoding='utf-8')
+    csv_buffer.seek(0)
+    
     headers = {
-        "Authorization": f"Bearer {DATAROBOT_API_KEY}",
-        "Content-Type": "application/json; charset=UTF-8"
+        "Authorization": f"Token {DATAROBOT_API_KEY}" # predict.py usa 'Token' en vez de 'Bearer'
     }
     
-    # DataRobot requiere que los datos vayan envueltos en una lista bajo la llave "data"
-    payload = {"data": [row_data]}
+    # Configuración del Job tal cual lo hace la función main() de predict.py
+    payload = {
+        "deploymentId": DATAROBOT_DEPLOYMENT_ID,
+        "passthroughColumnsSet": "all" # Mantiene nuestras columnas de entrada en la respuesta
+    }
     
-    with st.spinner("Solicitando predicción a DataRobot..."):
-        try:
-            response = requests.post(PREDICTION_URL, json=payload, headers=headers)
+    status_text = st.empty()
+    progress_bar = st.progress(0)
+    
+    try:
+        # Paso A: Crear el Job de predicción (POST)
+        status_text.info("Iniciando tarea de predicción en DataRobot...")
+        job_response = requests.post(BATCH_PREDICTIONS_URL, json=payload, headers=headers)
+        
+        if job_response.status_code not in [200, 201]:
+            st.error(f"Error al inicializar el Job ({job_response.status_code})")
+            st.text(job_response.text)
+            st.stop()
             
-            if response.status_code == 200:
-                result = response.json()
+        job_data = job_response.json()
+        job_id = job_data["id"]
+        links = job_data["links"]
+        
+        # Paso B: Subir nuestro dataset temporal (PUT)
+        status_text.info("Subiendo datos ingresados...")
+        upload_url = links["csvUpload"]
+        upload_headers = {
+            "Authorization": f"Token {DATAROBOT_API_KEY}",
+            "Content-Type": "text/csv; encoding=utf-8"
+        }
+        requests.put(upload_url, data=csv_buffer, headers=upload_headers)
+        
+        # Paso C: Monitorear el progreso en bucle (Mismo sistema de pooling de predict.py)
+        job_url = links["self"]
+        while True:
+            check_response = requests.get(job_url, headers=headers).json()
+            status = check_response["status"]
+            
+            if status == "RUNNING":
+                percentage = int(check_response.get("percentageCompleted", 0))
+                progress_bar.progress(percentage)
+                status_text.info(f"Procesando predicción... {percentage}%")
+            elif status == "COMPLETED":
+                progress_bar.progress(100)
+                status_text.success("¡Procesamiento de DataRobot completado!")
+                break
+            elif status in ["FAILED", "ABORTED"]:
+                st.error(f"La tarea de DataRobot falló con estado: {status}")
+                st.text(check_response.get("statusDetails", "Sin detalles adicionales."))
+                st.stop()
                 
-                # Extraemos el valor de la predicción del formato estándar de la API v2
-                prediction_value = result["data"][0]["prediction"]
-                
-                st.success("¡Predicción calculada con éxito!")
-                st.write("### 📈 Resultado de la Variable Objetivo:")
-                st.metric(label="Productividad Estimada", value=f"{prediction_value:.2f}")
-                
-            else:
-                st.error(f"Error de DataRobot ({response.status_code})")
-                with st.expander("Ver respuesta detallada del servidor"):
-                    st.text(response.text)
-                st.info("Nota: Si persiste el error, verifica que el 'DATAROBOT_HOST' en tus secretos de Streamlit coincida exactamente con la URL base de tu entorno corporativo o público.")
-                
-        except Exception as e:
-            st.error(f"Ocurrió un error al intentar conectar con el servicio: {e}")
+            time.sleep(2) # Intervalo corto optimizado para una sola fila
+            
+        # Paso D: Descargar los resultados finales (GET)
+        download_url = links["download"]
+        download_response = requests.get(download_url, headers=headers)
+        
+        # Leemos el CSV resultante que nos devuelve DataRobot
+        result_df = pd.read_csv(io.StringIO(download_response.text))
+        
+        # Buscamos la columna de predicción generada automáticamente por tu despliegue
+        # Generalmente se llama 'Prediction' o el nombre de tu variable objetivo + '_Prediction'
+        pred_column = [col for col in result_df.columns if 'prediction' in col.lower()]
+        
+        if pred_column:
+            prediction_value = result_df[pred_column[0]].iloc[0]
+            st.write("---")
+            st.write("### 📈 Resultado de la Variable Objetivo:")
+            st.metric(label="Productividad Estimada", value=f"{float(prediction_value):.4f}")
+        else:
+            st.warning("Se procesó con éxito, pero no se encontró la columna de predicción en el archivo devuelto.")
+            st.dataframe(result_df)
+            
+    except Exception as e:
+        st.error(f"Ocurrió un error inesperado de conexión: {e}")
