@@ -1,4 +1,4 @@
-para el siguiente codigo mejora el formato de presentacion tipo dash board donde le des colores y la fuente varie segun la informacion al igual que el fondo del espacio donde esta el texto import streamlit as st
+import streamlit as st
 import requests
 import pandas as pd
 import io
