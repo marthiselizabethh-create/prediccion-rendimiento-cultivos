@@ -19,7 +19,7 @@ except KeyError as e:
     st.error(f"⚠️ Error: Falta configurar el secreto obligatorio {e} en los ajustes de Streamlit.")
     st.stop()
 
-# URL exacta extraída de tu archivo predict.py
+# URL exacta para la creación de tareas por lotes
 BATCH_PREDICTIONS_URL = f"{DATAROBOT_HOST}/api/v2/batchPredictions/"
 
 # --- Formulario de Entrada de Datos ---
@@ -99,7 +99,6 @@ if submit_button:
         status_text.info("Iniciando tarea de predicción en DataRobot...")
         job_response = requests.post(BATCH_PREDICTIONS_URL, json=payload, headers=headers)
         
-        # CORRECCIÓN: DataRobot puede responder con 200, 201 o 202 (Accepted)
         if job_response.status_code not in [200, 201, 202]:
             st.error(f"Error al inicializar el Job ({job_response.status_code})")
             st.text(job_response.text)
@@ -117,28 +116,28 @@ if submit_button:
         }
         requests.put(upload_url, data=csv_buffer, headers=upload_headers)
         
-        # Monitorear el progreso en bucle (Mismo sistema de pooling de predict.py)
+        # Monitorear el progreso en bucle
         job_url = links["self"]
         download_url = None
         
         while True:
             check_response = requests.get(job_url, headers=headers).json()
-            status = check_response["status"][cite: 1]
+            status = check_response["status"]
             
             if status == "INITIALIZING":
-                status_text.info("DataRobot está preparando la cola de ejecución...")[cite: 1]
+                status_text.info("DataRobot está preparando la cola de ejecución...")
             elif status == "RUNNING":
-                percentage = int(check_response.get("percentageCompleted", 0))[cite: 1]
+                percentage = int(check_response.get("percentageCompleted", 0))
                 progress_bar.progress(percentage)
-                status_text.info(f"Procesando predicción... {percentage}%")[cite: 1]
+                status_text.info(f"Procesando predicción... {percentage}%")
             elif status == "COMPLETED":
                 progress_bar.progress(100)
-                status_text.success("¡Procesamiento de DataRobot completado!")[cite: 1]
-                download_url = check_response["links"]["download"] # Extraemos la URL de descarga ya disponible
+                status_text.success("¡Procesamiento de DataRobot completado!")
+                download_url = check_response["links"]["download"]
                 break
             elif status in ["FAILED", "ABORTED"]:
-                st.error(f"La tarea de DataRobot falló con estado: {status}")[cite: 1]
-                st.text(check_response.get("statusDetails", "Sin detalles adicionales."))[cite: 1]
+                st.error(f"La tarea de DataRobot falló con estado: {status}")
+                st.text(check_response.get("statusDetails", "Sin detalles adicionales."))
                 st.stop()
                 
             time.sleep(2)
