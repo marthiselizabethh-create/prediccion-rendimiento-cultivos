@@ -57,7 +57,6 @@ with st.form("cultivo_form"):
 
 # --- Lógica de Predicción por Lotes en Tiempo Real ---
 if submit_button:
-    # 1. Crear estructura de datos idéntica a lo que espera tu modelo corporativo
     row_data = {
         "Código Dane departamento": [cod_dane_dept],
         "Departamento": [departamento],
@@ -79,40 +78,37 @@ if submit_button:
         "Nombre científico del cultivo": [nombre_cientifico]
     }
     
-    # Transformamos a un CSV en memoria (Buffer)
     df = pd.DataFrame(row_data)
     csv_buffer = io.BytesIO()
     df.to_csv(csv_buffer, index=False, encoding='utf-8')
     csv_buffer.seek(0)
     
     headers = {
-        "Authorization": f"Token {DATAROBOT_API_KEY}" # predict.py usa 'Token' en vez de 'Bearer'
+        "Authorization": f"Token {DATAROBOT_API_KEY}"
     }
     
-    # Configuración del Job tal cual lo hace la función main() de predict.py
     payload = {
         "deploymentId": DATAROBOT_DEPLOYMENT_ID,
-        "passthroughColumnsSet": "all" # Mantiene nuestras columnas de entrada en la respuesta
+        "passthroughColumnsSet": "all"
     }
     
     status_text = st.empty()
     progress_bar = st.progress(0)
     
     try:
-        # Paso A: Crear el Job de predicción (POST)
         status_text.info("Iniciando tarea de predicción en DataRobot...")
         job_response = requests.post(BATCH_PREDICTIONS_URL, json=payload, headers=headers)
         
-        if job_response.status_code not in [200, 201]:
+        # CORRECCIÓN: DataRobot puede responder con 200, 201 o 202 (Accepted)
+        if job_response.status_code not in [200, 201, 202]:
             st.error(f"Error al inicializar el Job ({job_response.status_code})")
             st.text(job_response.text)
             st.stop()
             
         job_data = job_response.json()
-        job_id = job_data["id"]
         links = job_data["links"]
         
-        # Paso B: Subir nuestro dataset temporal (PUT)
+        # Subir nuestro dataset temporal (PUT)
         status_text.info("Subiendo datos ingresados...")
         upload_url = links["csvUpload"]
         upload_headers = {
@@ -121,46 +117,50 @@ if submit_button:
         }
         requests.put(upload_url, data=csv_buffer, headers=upload_headers)
         
-        # Paso C: Monitorear el progreso en bucle (Mismo sistema de pooling de predict.py)
+        # Monitorear el progreso en bucle (Mismo sistema de pooling de predict.py)
         job_url = links["self"]
+        download_url = None
+        
         while True:
             check_response = requests.get(job_url, headers=headers).json()
-            status = check_response["status"]
+            status = check_response["status"][cite: 1]
             
-            if status == "RUNNING":
-                percentage = int(check_response.get("percentageCompleted", 0))
+            if status == "INITIALIZING":
+                status_text.info("DataRobot está preparando la cola de ejecución...")[cite: 1]
+            elif status == "RUNNING":
+                percentage = int(check_response.get("percentageCompleted", 0))[cite: 1]
                 progress_bar.progress(percentage)
-                status_text.info(f"Procesando predicción... {percentage}%")
+                status_text.info(f"Procesando predicción... {percentage}%")[cite: 1]
             elif status == "COMPLETED":
                 progress_bar.progress(100)
-                status_text.success("¡Procesamiento de DataRobot completado!")
+                status_text.success("¡Procesamiento de DataRobot completado!")[cite: 1]
+                download_url = check_response["links"]["download"] # Extraemos la URL de descarga ya disponible
                 break
             elif status in ["FAILED", "ABORTED"]:
-                st.error(f"La tarea de DataRobot falló con estado: {status}")
-                st.text(check_response.get("statusDetails", "Sin detalles adicionales."))
+                st.error(f"La tarea de DataRobot falló con estado: {status}")[cite: 1]
+                st.text(check_response.get("statusDetails", "Sin detalles adicionales."))[cite: 1]
                 st.stop()
                 
-            time.sleep(2) # Intervalo corto optimizado para una sola fila
+            time.sleep(2)
             
-        # Paso D: Descargar los resultados finales (GET)
-        download_url = links["download"]
-        download_response = requests.get(download_url, headers=headers)
-        
-        # Leemos el CSV resultante que nos devuelve DataRobot
-        result_df = pd.read_csv(io.StringIO(download_response.text))
-        
-        # Buscamos la columna de predicción generada automáticamente por tu despliegue
-        # Generalmente se llama 'Prediction' o el nombre de tu variable objetivo + '_Prediction'
-        pred_column = [col for col in result_df.columns if 'prediction' in col.lower()]
-        
-        if pred_column:
-            prediction_value = result_df[pred_column[0]].iloc[0]
-            st.write("---")
-            st.write("### 📈 Resultado de la Variable Objetivo:")
-            st.metric(label="Productividad Estimada", value=f"{float(prediction_value):.4f}")
+        # Descargar los resultados finales (GET)
+        if download_url:
+            download_response = requests.get(download_url, headers=headers)
+            result_df = pd.read_csv(io.StringIO(download_response.text))
+            
+            # Buscamos la columna dinámica generada por DataRobot
+            pred_column = [col for col in result_df.columns if 'prediction' in col.lower()]
+            
+            if pred_column:
+                prediction_value = result_df[pred_column[0]].iloc[0]
+                st.write("---")
+                st.write("### 📈 Resultado de la Variable Objetivo:")
+                st.metric(label="Productividad Estimada", value=f"{float(prediction_value):.4f}")
+            else:
+                st.warning("Se procesó con éxito, pero no se encontró la columna de predicción en el archivo devuelto.")
+                st.dataframe(result_df)
         else:
-            st.warning("Se procesó con éxito, pero no se encontró la columna de predicción en el archivo devuelto.")
-            st.dataframe(result_df)
+            st.error("No se pudo obtener el enlace de descarga de los resultados.")
             
     except Exception as e:
         st.error(f"Ocurrió un error inesperado de conexión: {e}")
