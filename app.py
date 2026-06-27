@@ -11,21 +11,17 @@ st.markdown("Ingrese los parámetros del cultivo para obtener la **productividad
 try:
     DATAROBOT_API_KEY = st.secrets["DATAROBOT_API_KEY"]
     DATAROBOT_DEPLOYMENT_ID = st.secrets["DATAROBOT_DEPLOYMENT_ID"]
+    DATAROBOT_HOST = st.secrets.get("DATAROBOT_HOST", "https://cfds-paved-v2.prd.ue1.aws.int.datarobot.com")
     
-    # IMPORTANTE: Para predicciones online en la nube pública de DataRobot,
-    # el endpoint por defecto utiliza "predApi/v1.0/" en lugar de "api/v2/"
-    DATAROBOT_HOST = st.secrets.get("DATAROBOT_HOST", "https://v2.man.datarobot.com")
-    
-    # Si tu despliegue requiere un Datarobot-Key para predicciones (común en entornos compartidos),
-    # agrégalo en tus secretos y el código lo detectará automáticamente.
-    DATAROBOT_KEY = st.secrets.get("DATAROBOT_KEY", None)
+    # El DataRobot-Key es INDISPENSABLE para evitar el error 403 en predicciones online
+    DATAROBOT_KEY = st.secrets["DATAROBOT_KEY"]
     
 except KeyError as e:
-    st.error(f"⚠️ Error: Falta configurar el secreto {e} en los ajustes de Streamlit.")
+    st.error(f"⚠️ Error: Falta configurar el secreto obligatorio: {e} en los ajustes de Streamlit.")
+    st.info("Para solucionar el error 403, necesitas añadir obligatoriamente tu 'DATAROBOT_KEY' en los secretos.")
     st.stop()
 
-# Construcción de la URL correcta para Real-Time Predictions
-# Formato estándar: https://<pred_endpoint>/predApi/v1.0/deployments/<id>/predictions
+# URL estándar de predicción en tiempo real
 PREDICTION_URL = f"{DATAROBOT_HOST}/predApi/v1.0/deployments/{DATAROBOT_DEPLOYMENT_ID}/predictions"
 
 # --- Formulario de Entrada de Datos ---
@@ -63,7 +59,6 @@ with st.form("cultivo_form"):
 
 # --- Lógica de Predicción en Tiempo Real ---
 if submit_button:
-    # Payload estructurado
     row_data = {
         "Código Dane departamento": cod_dane_dept,
         "Departamento": departamento,
@@ -85,27 +80,21 @@ if submit_button:
         "Nombre científico del cultivo": nombre_cientifico
     }
     
-    # Configuración de Headers requeridos por DataRobot PredApi
+    # Headers con la autenticación dual requerida por DataRobot para Real-Time APIs
     headers = {
         "Authorization": f"Bearer {DATAROBOT_API_KEY}",
+        "DataRobot-Key": DATAROBOT_KEY,
         "Content-Type": "application/json; charset=UTF-8"
     }
     
-    # Si tienes la clave DataRobot-Key configurada en tus secretos, se añade al header
-    if DATAROBOT_KEY:
-        headers["DataRobot-Key"] = DATAROBOT_KEY
-    
-    # La API espera una lista de diccionarios dentro de un parámetro "data" o directamente la lista
     payload = [row_data]
     
-    with st.spinner("Conectando con el servidor de predicción de DataRobot..."):
+    with st.spinner("Solicitando predicción a DataRobot..."):
         try:
             response = requests.post(PREDICTION_URL, json=payload, headers=headers)
             
             if response.status_code == 200:
                 result = response.json()
-                
-                # La estructura de respuesta típica es {"data": [{"prediction": valor, ...}]}
                 prediction_value = result["data"][0]["prediction"]
                 
                 st.success("¡Predicción calculada con éxito!")
@@ -114,8 +103,7 @@ if submit_button:
                 
             else:
                 st.error(f"Error de DataRobot ({response.status_code})")
-                st.info("Asegúrate de que el DATAROBOT_HOST y el DEPLOYMENT_ID sean los correctos para predicciones en tiempo real.")
-                with st.expander("Ver detalle técnico del error"):
+                with st.expander("Ver respuesta detallada del servidor"):
                     st.text(response.text)
                 
         except Exception as e:
