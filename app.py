@@ -83,7 +83,7 @@ st.markdown("""
 
 st.markdown('<div class="main-title">🌾 Calculadora de Productividad Agrícola</div>', unsafe_allow_html=True)
 st.markdown(
-    '<div class="subtitle">Ingrese los parámetros del cultivo para obtener la productividad estimada mediante DataRobot.</div>',
+    '<div class="subtitle">Predicción de productividad para cultivos de Banano y Plátano mediante DataRobot.</div>',
     unsafe_allow_html=True
 )
 
@@ -103,25 +103,36 @@ with st.form("cultivo_form"):
     with col1:
         st.markdown('<div class="section-card">', unsafe_allow_html=True)
         st.subheader("📍 Datos Geográficos y Temporales")
+
         departamento = st.text_input("Departamento", value="Antioquia")
         municipio = st.text_input("Municipio", value="Medellín")
         anio = st.number_input("Año", min_value=2000, max_value=2030, value=2024)
         periodo = st.number_input("Periodo", min_value=1, value=2024)
+
         st.markdown('</div>', unsafe_allow_html=True)
 
     with col2:
         st.markdown('<div class="section-card">', unsafe_allow_html=True)
         st.subheader("🌱 Datos del Cultivo")
-        grupo = st.text_input("Grupo cultivo", value="Cereales")
-        subgrupo = st.text_input("Subgrupo", value="Maíz")
-        cultivo = st.text_input("Cultivo", value="Maíz Tecnificado")
-        desagregacion = st.text_input("Desagregación cultivo", value="Maíz Tecnificado Solo")
-        ciclo = st.text_input("Ciclo del cultivo", value="Transitorio")
-        estado_fisico = st.text_input("Estado físico del cultivo", value="Grano")
+
+        grupo = st.text_input("Grupo cultivo", value="Frutales", disabled=True)
+
+        subgrupo = st.selectbox(
+            "Subgrupo",
+            ["Banano", "Plátano"]
+        )
+
+        cultivo = subgrupo
+        desagregacion = subgrupo
+
+        ciclo = st.text_input("Ciclo del cultivo", value="Permanente", disabled=True)
+        estado_fisico = st.text_input("Estado físico del cultivo", value="Fresco", disabled=True)
+
         st.markdown('</div>', unsafe_allow_html=True)
 
     st.markdown('<div class="section-card">', unsafe_allow_html=True)
     st.subheader("📊 Variables Cuantitativas")
+
     col3, col4, col5, col6 = st.columns(4)
 
     with col3:
@@ -156,6 +167,7 @@ if submit_button:
     }
 
     df = pd.DataFrame(row_data)
+
     csv_buffer = io.BytesIO()
     df.to_csv(csv_buffer, index=False, encoding='utf-8')
     csv_buffer.seek(0)
@@ -190,7 +202,13 @@ if submit_button:
             "Authorization": f"Token {DATAROBOT_API_KEY}",
             "Content-Type": "text/csv; encoding=utf-8"
         }
-        requests.put(upload_url, data=csv_buffer, headers=upload_headers)
+
+        upload_response = requests.put(upload_url, data=csv_buffer, headers=upload_headers)
+
+        if upload_response.status_code not in [200, 201, 202, 204]:
+            st.error(f"Error al subir los datos ({upload_response.status_code})")
+            st.text(upload_response.text)
+            st.stop()
 
         job_url = links["self"]
         download_url = None
@@ -207,7 +225,7 @@ if submit_button:
                 status_text.info(f"Procesando predicción... {percentage}%")
             elif status == "COMPLETED":
                 progress_bar.progress(100)
-                status_text.success("¡Procesamiento de DataRobot completado!")
+                status_text.success("Procesamiento de DataRobot completado.")
                 download_url = check_response["links"]["download"]
                 break
             elif status in ["FAILED", "ABORTED"]:
@@ -228,7 +246,10 @@ if submit_button:
 
                 st.markdown('<div class="result-box">', unsafe_allow_html=True)
                 st.write("### 📈 Resultado de la Variable Objetivo")
-                st.metric(label="Productividad Estimada", value=f"{float(prediction_value):.4f}")
+                st.metric(
+                    label="Productividad Estimada",
+                    value=f"{float(prediction_value):.4f}"
+                )
                 st.markdown('</div>', unsafe_allow_html=True)
             else:
                 st.warning("Se procesó con éxito, pero no se encontró la columna de predicción en el archivo devuelto.")
